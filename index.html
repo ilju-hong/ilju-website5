@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>자유게시판</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-slate-950 text-gray-800 dark:text-gray-100 min-h-screen transition-colors duration-200 py-6 px-3 sm:px-4">
+
+    <div id="app" class="max-w-2xl mx-auto space-y-4">
+
+        <!-- MAIN FORUM VIEWER (캡처 대상 카드) -->
+        <main id="viewerCard" class="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-md overflow-hidden transition-all">
+            
+            <!-- 자유게시판 헤더 -->
+            <div class="border-b border-gray-100 dark:border-slate-800 p-4 sm:p-5 bg-slate-50/50 dark:bg-slate-900/50">
+                <div class="flex justify-between items-center text-xs text-red-600 dark:text-red-400 font-semibold mb-1">
+                    <span class="tracking-wide flex items-center">
+                        <i data-lucide="message-square" class="w-3.5 h-3.5 mr-1"></i> 🔒 자유게시판
+                    </span>
+                    <span class="bg-red-50 dark:bg-red-950/60 px-2 py-0.5 rounded text-[11px] text-red-600 dark:text-red-400">익명</span>
+                </div>
+                <h2 id="displayPostTitle" class="text-base sm:text-xl font-bold text-gray-900 dark:text-gray-50 leading-snug mt-1 break-words">
+                    <!-- Title injected dynamically -->
+                </h2>
+                
+                <!-- 게시글 메타 정보 -->
+                <div class="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500 mt-3 pt-3 border-t border-gray-100 dark:border-slate-800/80">
+                    <div class="flex items-center space-x-2">
+                        <span class="font-medium text-gray-700 dark:text-gray-300 flex items-center">
+                            <span class="text-xs mr-1 inline-block">🍎</span>
+                            익명
+                        </span>
+                        <span>•</span>
+                        <span id="displayPostTime">--</span>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <span class="flex items-center"><i data-lucide="eye" class="w-3.5 h-3.5 mr-1"></i> <span id="displayViews">0</span></span>
+                        <button id="postLikeBtn" onclick="togglePostLike()" class="flex items-center text-red-500 hover:text-red-600 transition-transform active:scale-125 cursor-pointer select-none">
+                            <i data-lucide="thumbs-up" class="w-3.5 h-3.5 mr-1"></i> 
+                            <span id="displayLikes">0</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 게시글 본문 영역 -->
+            <div class="p-4 sm:p-6 text-sm sm:text-base leading-relaxed text-gray-800 dark:text-gray-200 min-h-[150px] border-b border-gray-100 dark:border-slate-800">
+                <div id="displayPostContent" class="whitespace-pre-wrap break-words space-y-2">
+                    <!-- Content injected dynamically -->
+                </div>
+            </div>
+
+            <!-- 댓글 영역 -->
+            <div class="bg-white dark:bg-slate-900 p-4 sm:p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-xs sm:text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center">
+                        <i data-lucide="message-circle" class="w-4 h-4 mr-1.5 text-red-500"></i>
+                        댓글 <span id="displayCommentCount" class="text-red-600 dark:text-red-400 ml-1">0</span>개
+                    </h3>
+                </div>
+
+                <!-- 댓글 목록 -->
+                <div id="commentsContainer" class="space-y-3">
+                    <!-- Comments injected dynamically -->
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Firebase SDK (실시간 온라인 데이터 저장 및 누적 연동) -->
+    <script type="module">
+        // Firebase는 렌더링 이후 선택적으로 로드합니다 (실패해도 글은 항상 표시됨)
+        let updateDoc, increment;
+
+        /* =====================================================================
+         *  ★ 익명 번호는 자동입니다 ★
+         *   - 댓글/대댓글은 { time: "방금 전", text: "내용", likes: 0 } 만 쓰면 됩니다.
+         *   - 화면에 보이는 순서대로 익명1, 익명2, 익명3 ... 자동으로 붙어요.
+         *     (중간에 댓글을 끼워 넣어도 뒤 번호가 알아서 밀립니다)
+         *   - 같은 사람이 또 쓴 걸로 하고 싶을 때만 author: "익명3" 처럼 직접 지정하세요.
+         *     (직접 지정한 댓글은 번호를 소모하지 않습니다)
+         *
+         *  ★ 글쓴이 댓글 추가 방법 ★
+         *   - 댓글/대댓글에 isAuthor: true 를 넣으면 "글쓴이" 배지가 붙습니다.
+         *       댓글      →  { isAuthor: true, time: "방금 전", text: "내용", likes: 0 }
+         *       대댓글    →  replies 안에 { isAuthor: true, time: "방금 전", text: "내용", likes: 0 }
+         * ===================================================================== */
+
+        // 기본 썰 데이터 (모든 좋아요 수는 0으로 초기화되었습니다)
+        const DEFAULT_POST_DATA = {
+            title: "내 씨피가 진짜일 수 있는 거임? 삼각도?",
+            time: "방금 전",
+            views: 723,
+            likes: 0,
+            content: '댕슈쟁 하자',
+            comments: [
+                { time: "방금 전", text: "댕슈쟁 외치면서 들어옴", likes: 0 },
+                {
+                    time: "방금 전", text: "숙소 댕슈쟁, 태채 + 매니저 이렇게 살고있는거 맞지?", likes: 0,
+                    replies: [
+                        { time: "방금 전", text: "재원이 폭탄 돌리기 썰 존나 웃기잖아 숙소 이사한다는 이야기 듣고 자연스럽게 댕슈, 태채로 째졌는데 댕태 둘다 재원이 안데려가려고 해서 슈채가 그러면 슈채쟁 살겠다 댕태 + 매니저 살아라 하니까 결국 댕이 재원이 데려온거임", likes: 0 },
+                        { time: "방금 전", text: "ㅅㅂ 내가 재원이었으면 울었음", likes: 0 },
+                        { time: "방금 전", text: "댕슈 팀에서 생활양식 가장 다른 두분이 어쩌다 같이 살 결심을 하셨을까", likes: 0 },
+                        { time: "방금 전", text: "아무래도 사랑하니까", likes: 0 },
+                    ]
+                },
+                {
+                    time: "방금 전", text: "애들 입사 순서 알려주라", likes: 0,
+                    replies: [
+                        { time: "방금 전", text: "슈쟁태댕채", likes: 0 },
+                    ]
+                },
+                {
+                    time: "방금 전", text: "다들 좋아하는 댕슈쟁 일화 말해주고가", likes: 0,
+                    replies: [
+                        { time: "방금 전", text: "쟁슈 재원이 학교 시우가 끝까지 보낸거ㅠㅠ 재원이 학교 자퇴하고 싶다니까 회사 : 차피 내 말 안들을 거잖음 ㄱ 했는데 시우가 안된다고 재원이 등교시간 알람 맞춰놓고 매일같이 깨워서 학교 졸업시킴 그래서 재원이 졸업할 때 시우 울었잖아ㅋㅋㅋ", likes: 0 },
+                        { time: "방금 전", text: "받고 재원이 수능도시락 싸준거 재원이가 걍 점심시간에도 잘거랬는데 밥 먹고 자라고 도시락 싸준거 너무 좋음", likes: 0 },
+                        { time: "방금 전", text: "댕슈쟁 저번 활동 음방 비하에서 재원이 시우 어깨에 기대서 자니까 윤식이 굳이 재원이 깨워서 바닥에 재움", likes: 0 },
+                        { time: "방금 전", text: "ㅋㅋㅋㅋ 재원이가 오른쪽 어깨에 기대고 있어서 왼손으로 핸드폰 하는 거 불편했을텐데 그대로 둔 게 너무너무임", likes: 0 },
+                        { time: "방금 전", text: "시우 괜찮다는데도 불편하지? 안불편해? 몇 번이나 물어보는 거 질투 개낌", likes: 0 },
+                    ]
+                },
+                {
+                    time: "방금 전", text: "그럼 댕슈쟁 제일 좋아하는 짤 말하기 나는 아육대 애기 어딨어 짤", likes: 0,
+                    replies: [
+                        { time: "방금 전", text: "아 그거 ㄹㅈㄷ", likes: 0 },
+                        { time: "방금 전", text: "그게 뭐야 나 늦덕이라ㅠㅠ", likes: 0 },
+                        { time: "방금 전", text: "애들 아육대에서 팬썹 해주다가 재원이 없어져서 시우가 화이트보드에 애기 어딨어? 적어서 팬들한테 물어봄 윤식이 그거 보고 손바닥으로 애기 지우고 재원이로 고쳐 씀", likes: 0 },
+                        { time: "방금 전", text: "그 움짤도 개쩌는데 음방 퇴근길 나오기 직전에 시우 의상 등 너무 많이 파여서 윤식이가 자기 후드집업 입혀주는거 지퍼 올려주는 손이 미침", likes: 0 },
+                        { time: "방금 전", text: "댕슈쟁 관람대상 변경 짤 잊지 말어라 타돌 공연하는데 둘다 시우 양옆에 앉아서 신난 시우 보고 웃는 짤 내 인생짤임", likes: 0 },
+                    ]
+                },
+                {
+                    time: "방금 전", text: "나 입덕부정기인데 재원이 병지컷 때문에 망설여짐 왜 기르는거래?", likes: 0,
+                    replies: [
+                        { time: "방금 전", text: "역병임 그냥 받아들여", likes: 0 },
+                        { time: "방금 전", text: "재원피셜 시우가 자르랬다고 곧 자를거래", likes: 0 },
+                        { time: "방금 전", text: "우리판 늑대소년 말 잘듣는것봐 ㄱㅇㄱ", likes: 0 },
+                    ]
+                },
+            ]
+        };
+
+        let POST_DATA = JSON.parse(JSON.stringify(DEFAULT_POST_DATA));
+        let db, postRef;
+
+        // Firebase 연동 초기화
+        async function initFirebase() {
+            try {
+                const BASE = "https://www.gstatic.com/firebasejs/11.6.1/";
+                const [{ initializeApp }, { getAuth, signInAnonymously, signInWithCustomToken }, fs] = await Promise.all([
+                    import(BASE + "firebase-app.js"),
+                    import(BASE + "firebase-auth.js"),
+                    import(BASE + "firebase-firestore.js")
+                ]);
+                const { getFirestore, doc, onSnapshot, setDoc } = fs;
+                updateDoc = fs.updateDoc;
+                increment = fs.increment;
+
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'anonymous-forum-app';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' 
+                    ? JSON.parse(__firebase_config) 
+                    : { apiKey: "demo", authDomain: "demo.firebaseapp.com", projectId: "demo-app" };
+
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                db = getFirestore(app);
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // 공유 및 실시간 누적 데이터 문서 위치
+                postRef = doc(db, 'artifacts', appId, 'public', 'data', 'forum_posts', 'main_post');
+
+                // 실시간 데이터 동기화
+                onSnapshot(postRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const cloudData = docSnap.data();
+                        POST_DATA.likes = cloudData.likes !== undefined ? cloudData.likes : 0;
+                        if (cloudData.commentLikes) {
+                            Object.keys(cloudData.commentLikes).forEach(key => {
+                                const [cIdx, rIdx] = key.split('_').map(Number);
+                                if (rIdx === undefined && POST_DATA.comments[cIdx]) {
+                                    POST_DATA.comments[cIdx].likes = cloudData.commentLikes[key];
+                                } else if (POST_DATA.comments[cIdx] && POST_DATA.comments[cIdx].replies && POST_DATA.comments[cIdx].replies[rIdx]) {
+                                    POST_DATA.comments[cIdx].replies[rIdx].likes = cloudData.commentLikes[key];
+                                }
+                            });
+                        }
+                    } else {
+                        // 문서가 없을 시 기본 0값으로 초기화 저장
+                        setDoc(postRef, {
+                            likes: 0,
+                            commentLikes: {}
+                        });
+                    }
+                    renderPost();
+                }, (error) => {
+                    console.error("Firestore sync error:", error);
+                    renderPost();
+                });
+
+            } catch (err) {
+                console.warn("Firebase 연동 불가 (로컬 동작 모드):", err);
+                renderPost();
+            }
+        }
+
+        // 화면 렌더링 함수
+        window.renderPost = function() {
+            try {
+                const titleEl = document.getElementById('displayPostTitle');
+                const timeEl = document.getElementById('displayPostTime');
+                const viewsEl = document.getElementById('displayViews');
+                const likesEl = document.getElementById('displayLikes');
+                const contentEl = document.getElementById('displayPostContent');
+
+                if (titleEl) titleEl.innerText = POST_DATA.title || '';
+                if (timeEl) timeEl.innerText = POST_DATA.time || '방금 전';
+                if (viewsEl) viewsEl.innerText = (POST_DATA.views || 0).toLocaleString();
+                if (likesEl) likesEl.innerText = (POST_DATA.likes || 0).toLocaleString();
+                if (contentEl) contentEl.innerText = POST_DATA.content || '';
+
+                const commentsContainer = document.getElementById('commentsContainer');
+                if (!commentsContainer) return;
+                commentsContainer.innerHTML = '';
+
+                const comments = POST_DATA.comments || [];
+                let totalCommentCount = comments.length;
+
+                // 익명 번호 자동 카운트 (렌더링할 때마다 1부터 다시 셉니다)
+                let anonCount = 0;
+                const nameHtml = (item, prefix) => {
+                    if (item.isAuthor) {
+                        return `<span class="text-[10px]">${prefix}✍️</span>
+                                <span class="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded font-bold">글쓴이</span>`;
+                    }
+                    const name = item.author || `익명${++anonCount}`;
+                    return `<span class="text-[10px]">${prefix}🍎</span><span>${name}</span>`;
+                };
+                
+                comments.forEach(c => {
+                    if (c.replies && c.replies.length > 0) {
+                        totalCommentCount += c.replies.length;
+                    }
+                });
+
+                const commentCountEl = document.getElementById('displayCommentCount');
+                if (commentCountEl) commentCountEl.innerText = totalCommentCount;
+
+                comments.forEach((comment, cIndex) => {
+                    const commentEl = document.createElement('div');
+                    commentEl.className = 'w-full rounded-xl px-3 py-3 text-left border ' + (comment.isAuthor
+                        ? 'bg-red-50/70 dark:bg-red-950/30 border-red-200 dark:border-red-900/60'
+                        : 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800');
+                    
+                    let htmlContent = `
+                        <!-- 닉네임 영역 -->
+                        <div class="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500 mb-2">
+                            <div class="flex items-center space-x-1 font-semibold text-gray-700 dark:text-gray-300">
+                                ${nameHtml(comment, '')}
+                            </div>
+                            <div class="flex items-center space-x-2 text-[11px]">
+                                <span>${comment.time || ''}</span>
+                                <button onclick="toggleCommentLike(${cIndex})" class="flex items-center text-red-500 font-medium hover:text-red-600 transition-transform active:scale-125 cursor-pointer select-none">
+                                    <i data-lucide="thumbs-up" class="w-3 h-3 mr-0.5 inline"></i>
+                                    <span>${comment.likes || 0}</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- 댓글 본문 -->
+                        <div class="text-xs sm:text-sm text-gray-800 dark:text-gray-200 break-words font-normal leading-relaxed mb-1">
+                            ${comment.text || ''}
+                        </div>
+                    `;
+
+                    // 대댓글 처리
+                    if (comment.replies && comment.replies.length > 0) {
+                        comment.replies.forEach((reply, rIndex) => {
+                            const isMore = reply.hasMoreBtn;
+                            const moreBtnHtml = isMore 
+                                ? `<button onclick="this.parentElement.innerText='삭제된 댓글입니다.';" class="ml-1 text-[11px] text-gray-400 hover:text-red-500 underline cursor-pointer">[더보기]</button>` 
+                                : '';
+
+                            htmlContent += `
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 pl-3 border-l-2 border-l-red-400 dark:border-l-red-500">
+                                    <div class="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500 mb-1.5">
+                                        <div class="flex items-center space-x-1 font-semibold text-gray-700 dark:text-gray-300">
+                                            ${nameHtml(reply, '↳ ')}
+                                        </div>
+                                        <div class="flex items-center space-x-2 text-[11px]">
+                                            <span>${reply.time || ''}</span>
+                                            <button onclick="toggleReplyLike(${cIndex}, ${rIndex})" class="flex items-center text-red-500 font-medium hover:text-red-600 transition-transform active:scale-125 cursor-pointer select-none">
+                                                <i data-lucide="thumbs-up" class="w-3 h-3 mr-0.5 inline"></i>
+                                                <span>${reply.likes || 0}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="reply-text text-xs sm:text-sm text-gray-800 dark:text-gray-200 break-words font-normal leading-relaxed">
+                                        ${reply.text || ''}${moreBtnHtml}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+
+                    commentEl.innerHTML = htmlContent;
+                    commentsContainer.appendChild(commentEl);
+                });
+
+                if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                    lucide.createIcons();
+                }
+            } catch (err) {
+                console.error("Rendering error:", err);
+            }
+        };
+
+        // 본문 실시간 좋아요 누적
+        window.togglePostLike = async function() {
+            POST_DATA.likes = (POST_DATA.likes || 0) + 1;
+            renderPost();
+            if (postRef && updateDoc) {
+                try {
+                    await updateDoc(postRef, { likes: increment(1) });
+                } catch (e) { console.error(e); }
+            }
+        };
+
+        // 댓글 실시간 좋아요 누적
+        window.toggleCommentLike = async function(cIndex) {
+            if (POST_DATA.comments[cIndex]) {
+                POST_DATA.comments[cIndex].likes = (POST_DATA.comments[cIndex].likes || 0) + 1;
+                renderPost();
+                if (postRef && updateDoc) {
+                    try {
+                        const fieldKey = `commentLikes.${cIndex}`;
+                        await updateDoc(postRef, { [fieldKey]: increment(1) });
+                    } catch (e) { console.error(e); }
+                }
+            }
+        };
+
+        // 대댓글 실시간 좋아요 누적
+        window.toggleReplyLike = async function(cIndex, rIndex) {
+            if (POST_DATA.comments[cIndex] && POST_DATA.comments[cIndex].replies[rIndex]) {
+                POST_DATA.comments[cIndex].replies[rIndex].likes = (POST_DATA.comments[cIndex].replies[rIndex].likes || 0) + 1;
+                renderPost();
+                if (postRef && updateDoc) {
+                    try {
+                        const fieldKey = `commentLikes.${cIndex}_${rIndex}`;
+                        await updateDoc(postRef, { [fieldKey]: increment(1) });
+                    } catch (e) { console.error(e); }
+                }
+            }
+        };
+
+        // 초기화 실행: 먼저 글을 그리고, 그 다음 Firebase 연결 시도
+        renderPost();
+        initFirebase();
+    </script>
+</body>
+</html>
